@@ -397,7 +397,8 @@ function DocumentUploader({ requiredDocs, documents, onAdd, onRemove, error }) {
   function handleFile(docType, file) {
     if (!file) return;
     const sizeKb = Math.round(file.size / 1024);
-    onAdd({ docType, fileName: file.name, sizeKb, uploadedAt: new Date().toISOString().slice(0, 10) });
+    const fileUrl = URL.createObjectURL(file);
+    onAdd({ docType, fileName: file.name, sizeKb, fileUrl, mimeType: file.type, uploadedAt: new Date().toISOString().slice(0, 10) });
   }
 
   function handleDrop(e, docType) {
@@ -428,13 +429,13 @@ function DocumentUploader({ requiredDocs, documents, onAdd, onRemove, error }) {
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   border: `1px solid ${T.green}44`, background: T.greenSoft, borderRadius: 8, padding: '10px 14px',
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <a href={uploaded.fileUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, textDecoration: 'none', flex: 1 }}>
                     <Icon name="ti-file-check" size={18} color={T.green} />
                     <div style={{ minWidth: 0 }}>
                       <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: T.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>{uploaded.fileName}</p>
-                      <p style={{ margin: 0, fontSize: 11.5, color: T.muted }}>{fmtBytes(uploaded.sizeKb)} · загружено</p>
+                      <p style={{ margin: 0, fontSize: 11.5, color: T.muted }}>{fmtBytes(uploaded.sizeKb)} · загружено, нажмите чтобы открыть</p>
                     </div>
-                  </div>
+                  </a>
                   <button onClick={() => onRemove(docType)} style={{ ...rowRemoveBtn, flexShrink: 0 }} aria-label={`Удалить ${docType}`}>
                     <Icon name="ti-x" size={16} />
                   </button>
@@ -818,8 +819,8 @@ function ApplicationForm({ tender, draft, setDraft, onCancel, onPreview }) {
           <>
             <Section title="Специализация">
               <div style={grid2}>
-                <Field label="Опыт в этой области, чел.-мес." error={errors.experienceMonths}>
-                  <input type="number" style={inputStyle} value={draft.specialization.experienceMonths} onChange={(e) => updateField('specialization', 'experienceMonths', e.target.value)} />
+                <Field label="Опыт в этой области, человеко-месяцев" error={errors.experienceMonths} hint="Человеко-месяц = 1 человек, работавший полный месяц на проекте. 2 человека по 6 мес. = 12 чел.-мес.">
+                  <input type="number" style={inputStyle} value={draft.specialization.experienceMonths} onChange={(e) => updateField('specialization', 'experienceMonths', e.target.value)} placeholder="Например: 24" />
                 </Field>
                 <Field label="Категория">
                   <input style={inputStyle} value={draft.specialization.category} onChange={(e) => updateField('specialization', 'category', e.target.value)} />
@@ -1159,8 +1160,8 @@ function NewTenderForm({ onCancel, onCreate }) {
               {Object.values(APPLICANT_TYPES).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
             </select>
           </Field>
-          <Field label="Мин. опыт, чел.-мес.">
-            <input type="number" style={inputStyle} value={form.minExperienceMonths} onChange={(e) => setForm({ ...form, minExperienceMonths: e.target.value })} />
+          <Field label="Мин. опыт, человеко-месяцев" hint="1 чел. × 1 месяц = 1 чел.-мес.">
+            <input type="number" style={inputStyle} value={form.minExperienceMonths} onChange={(e) => setForm({ ...form, minExperienceMonths: e.target.value })} placeholder="Например: 60" />
           </Field>
           <Field label="Требуемый язык">
             <input style={inputStyle} value={form.requiredLanguage} onChange={(e) => setForm({ ...form, requiredLanguage: e.target.value })} />
@@ -1290,19 +1291,33 @@ function ApplicationDetail({ application, tender, result, tier, onBack, onApprov
             <SectionTitle>Загруженные документы</SectionTitle>
             <div style={{ display: 'grid', gap: 8 }}>
               {application.documents.map((d) => (
-                <div key={d.docType} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px', background: T.surfaceSunken, borderRadius: 8 }}>
+                <a
+                  key={d.docType}
+                  href={d.fileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px',
+                    background: T.surfaceSunken, borderRadius: 8, textDecoration: 'none',
+                    cursor: d.fileUrl ? 'pointer' : 'default', opacity: d.fileUrl ? 1 : 0.6,
+                  }}
+                  onClick={(e) => { if (!d.fileUrl) e.preventDefault(); }}
+                >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <Icon name="ti-file-text" size={17} color={T.ink2} />
                     <div style={{ minWidth: 0 }}>
                       <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: T.ink }}>{d.docType}</p>
-                      <p style={{ margin: 0, fontSize: 11.5, color: T.muted }}>{d.fileName} · {fmtBytes(d.sizeKb)}</p>
+                      <p style={{ margin: 0, fontSize: 11.5, color: T.muted }}>{d.fileName} · {fmtBytes(d.sizeKb)}{!d.fileUrl && ' · демо-запись, файл недоступен'}</p>
                     </div>
                   </div>
-                  <Icon name="ti-external-link" size={15} color={T.faint} />
-                </div>
+                  {d.fileUrl && <Icon name="ti-external-link" size={15} color={T.accent} />}
+                </a>
               ))}
               {application.documents.length === 0 && <p style={{ fontSize: 13, color: T.faint, margin: 0 }}>Документы не загружены.</p>}
             </div>
+            <p style={{ fontSize: 11, color: T.faint, margin: '10px 0 0' }}>
+              Файлы открываются в новой вкладке. Ссылки действительны только в этой сессии браузера.
+            </p>
           </div>
         </div>
 
