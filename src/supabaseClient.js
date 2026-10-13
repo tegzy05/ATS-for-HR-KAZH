@@ -7,6 +7,17 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/ai-score-expert`;
 
+// Storage keys must be ASCII-safe (Cyrillic or Kazakh file names are rejected).
+// The original file name is still saved in the file_name column for display.
+function safeStorageName(name) {
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot).replace(/[^A-Za-z0-9.]/g, '') : '';
+  const base = (dot > 0 ? name.slice(0, dot) : name)
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'file';
+  return `${base}${ext}`;
+}
+
 // ============================================================
 // Справочники
 // ============================================================
@@ -47,7 +58,7 @@ export async function createTender({ title, applicantTypeKey, positions, require
   let jdFileName = null;
 
   if (jdFile) {
-    const path = `${Date.now()}_${jdFile.name}`;
+    const path = `${Date.now()}_${safeStorageName(jdFile.name)}`;
     const { error: uploadError } = await supabase.storage.from('tender-docs').upload(path, jdFile);
     if (uploadError) throw uploadError;
     jdFilePath = path;
@@ -134,7 +145,7 @@ export async function createApplication({ tenderId, applicantTypeKey, personal, 
 
   // Загружаем документы в Storage и записываем метаданные
   for (const doc of documents) {
-    const path = `${application.id}/${Date.now()}_${doc.file.name}`;
+    const path = `${application.id}/${Date.now()}_${safeStorageName(doc.file.name)}`;
     const { error: uploadError } = await supabase.storage.from('application-docs').upload(path, doc.file);
     if (uploadError) throw uploadError;
 
@@ -153,7 +164,7 @@ export async function createApplication({ tenderId, applicantTypeKey, personal, 
   for (const expert of experts) {
     let cvFilePath = null, cvFileName = null;
     if (expert.cvFile) {
-      const path = `${application.id}/cv_${Date.now()}_${expert.cvFile.name}`;
+      const path = `${application.id}/cv_${Date.now()}_${safeStorageName(expert.cvFile.name)}`;
       const { error: cvUploadError } = await supabase.storage.from('application-docs').upload(path, expert.cvFile);
       if (cvUploadError) throw cvUploadError;
       cvFilePath = path;

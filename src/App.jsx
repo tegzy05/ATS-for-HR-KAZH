@@ -765,7 +765,9 @@ function computeApplicationScore(application, tender) {
   const expertResults = experts.map((expert) => {
     const position = expert.tender_positions;
     const scores = expert.expert_scores || [];
-    const disq = expert.expert_disqualifications?.[0] || null;
+    // PostgREST returns a single object (not an array) for a one-to-one embed
+    const disqRaw = expert.expert_disqualifications;
+    const disq = (Array.isArray(disqRaw) ? disqRaw[0] : disqRaw) || null;
 
     const byLetter = {};
     scores.forEach((s) => { byLetter[s.criterion] = s; });
