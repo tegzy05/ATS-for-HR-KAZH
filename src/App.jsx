@@ -5,7 +5,7 @@ import {
   fetchApplications, createApplication, updateApplicationStatus,
   getDocumentFileUrl, requestAiScore, saveExpertScore,
   setExpertDisqualification, clearExpertDisqualification,
-} from './supabaseClient';
+} from './backend';
 
 // ==================================================================
 // Дизайн-токены
@@ -250,7 +250,7 @@ function Sidebar({ role, setRole }) {
       <NavButton active={role === 'hr'} onClick={() => setRole('hr')} icon="ti-briefcase" label="Кабинет HR" />
       <div style={{ marginTop: 'auto', padding: '12px 8px 0', borderTop: `1px solid ${T.line}` }}>
         <p style={{ fontSize: 11, color: T.faint, margin: '12px 0 0', lineHeight: 1.5, display: 'flex', alignItems: 'center', gap: 5 }}>
-          <Icon name="ti-database" size={12} color={T.faint} /> Данные хранятся в базе Supabase
+          <Icon name="ti-database" size={12} color={T.faint} /> Данные хранятся в базе Firebase
         </p>
       </div>
     </div>
@@ -765,9 +765,7 @@ function computeApplicationScore(application, tender) {
   const expertResults = experts.map((expert) => {
     const position = expert.tender_positions;
     const scores = expert.expert_scores || [];
-    // PostgREST returns a single object (not an array) for a one-to-one embed
-    const disqRaw = expert.expert_disqualifications;
-    const disq = (Array.isArray(disqRaw) ? disqRaw[0] : disqRaw) || null;
+    const disq = expert.expert_disqualifications?.[0] || null;
 
     const byLetter = {};
     scores.forEach((s) => { byLetter[s.criterion] = s; });
@@ -1259,28 +1257,28 @@ function ExpertScoreCard({ expertResult, disqReasons, reloadAll, showToast }) {
       setDraftScores(result);
       setExpanded(true);
     } catch (err) {
-      setAiError(err.message || 'Не удалось получить оценку от AI. Проверьте, что Edge Function развёрнута и ключ Anthropic настроен.');
+      setAiError(err.message || 'Не удалось получить оценку от AI. Проверьте, что Cloud Function развёрнута и ключ Anthropic настроен.');
     } finally {
       setAiLoading(false);
     }
   }
 
   async function acceptScore(letter, rating, justification, source) {
-    await saveExpertScore(expert.id, letter, rating, justification, source);
+    await saveExpertScore(expert, letter, rating, justification, source);
     await reloadAll();
     showToast(`Оценка по критерию ${letter} сохранена`, 'success');
   }
 
   async function handleDisqualify() {
     const reason = disqReasons.find((r) => r.code === disqCode);
-    await setExpertDisqualification(expert.id, disqCode, reason?.reason_text || '');
+    await setExpertDisqualification(expert, disqCode, reason?.reason_text || '');
     await reloadAll();
     showToast('Эксперт дисквалифицирован', 'danger');
     setShowDisqForm(false);
   }
 
   async function handleClearDisq() {
-    await clearExpertDisqualification(expert.id);
+    await clearExpertDisqualification(expert);
     await reloadAll();
     showToast('Дисквалификация снята', 'success');
   }

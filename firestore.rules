@@ -1,0 +1,42 @@
+rules_version = '2';
+
+// The app has no login: the browser talks to Firestore as an anonymous client
+// and the "Applicant / HR" switch is only a UI toggle. These rules therefore
+// allow exactly what the app does and nothing more:
+//   - anyone can read tenders and applications
+//   - anyone can publish a tender or submit an application (never edit or delete)
+//   - an application can only change its `status` and its `experts` map
+//     (HR approving / declining, scoring and disqualifying experts)
+// To lock the HR side down properly, add Firebase Authentication and require
+// request.auth in the update rules below.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /tenders/{tenderId} {
+      allow read: if true;
+      allow create: if request.resource.data.status == 'open'
+                    && request.resource.data.title is string
+                    && request.resource.data.title.size() > 0
+                    && request.resource.data.title.size() <= 300
+                    && request.resource.data.tender_positions is list
+                    && request.resource.data.created_at == request.time;
+      allow update, delete: if false;
+    }
+
+    match /applications/{applicationId} {
+      allow read: if true;
+      allow create: if request.resource.data.status == 'submitted'
+                    && request.resource.data.full_name is string
+                    && request.resource.data.full_name.size() > 0
+                    && request.resource.data.email is string
+                    && request.resource.data.email.size() > 0
+                    && request.resource.data.experts is map
+                    && request.resource.data.submitted_at == request.time;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'experts'])
+                    && request.resource.data.status in ['submitted', 'approved', 'declined'];
+      allow delete: if false;
+    }
+
+    // Everything else is closed.
+  }
+}

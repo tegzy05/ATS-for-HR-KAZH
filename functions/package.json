@@ -1,0 +1,13 @@
+{
+  "name": "functions",
+  "private": true,
+  "description": "Cloud Functions for the ATS (AI scoring of proposed experts)",
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "firebase-functions": "^7.0.0"
+  }
+}

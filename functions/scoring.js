@@ -1,27 +1,7 @@
-// Supabase Edge Function: ai-score-expert
-//
-// Receives one proposed expert and the tender position they are proposed for,
-// asks Claude to suggest a 0-100 rating and a short justification for each of
-// the three criteria (A, B, C), and returns:
-//   { A: { rating, justification }, B: {...}, C: {...} }
-//
-// The scores are only proposals: the HR committee approves or edits them in
-// the UI before anything is saved.
-//
-// Secrets (Supabase Dashboard → Edge Functions → Secrets, or `supabase secrets set`):
-//   ANTHROPIC_API_KEY   required
-//   ANTHROPIC_MODEL     optional, defaults to claude-sonnet-5-5
-//   ALLOWED_ORIGIN      optional, e.g. https://tegzy05.github.io (defaults to *)
-
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
-const MODEL = Deno.env.get('ANTHROPIC_MODEL') ?? 'claude-sonnet-5-5';
-const ALLOWED_ORIGIN = Deno.env.get('ALLOWED_ORIGIN') ?? '*';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+// Scoring logic, kept separate from the Firebase wiring so it can be tested on
+// its own. Asks Claude for a 0-100 rating and a short justification for each of
+// criteria A, B and C, and returns { A: {rating, justification}, B: ..., C: ... }.
+// The scores are proposals only: the HR committee approves or edits them in the UI.
 
 const MAX_FIELD_CHARS = 6000;
 
@@ -46,7 +26,7 @@ const criterionSchema = {
   required: ['rating', 'justification'],
 };
 
-const scoreTool = {
+const SCORE_TOOL = {
   name: 'submit_scores',
   description: 'Submit the proposed rating and justification for criteria A, B and C.',
   input_schema: {
@@ -56,47 +36,34 @@ const scoreTool = {
   },
 };
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
+// `code` uses Firebase callable error codes so index.js can pass it straight on.
+class ScoringError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
 }
 
-function text(value: unknown): string {
+function text(value) {
   if (value === null || value === undefined) return '(not provided)';
   const s = String(value).trim();
   if (!s) return '(not provided)';
-  return s.length > MAX_FIELD_CHARS ? s.slice(0, MAX_FIELD_CHARS) + ' …[truncated]' : s;
+  return s.length > MAX_FIELD_CHARS ? `${s.slice(0, MAX_FIELD_CHARS)} …[truncated]` : s;
 }
 
-function criterionBlock(letter: string, c: any): string {
+function criterionBlock(letter, c) {
   const weight = typeof c?.weight === 'number' ? `${Math.round(c.weight * 100)}%` : 'n/a';
   return `Criterion ${letter}: ${text(c?.label)} (weight ${weight})\nRequirement: ${text(c?.requirement)}`;
 }
 
-function clampRating(value: unknown): number {
+function clampRating(value) {
   const n = Math.round(Number(value));
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, n));
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
-  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY is not set for this function' }, 500);
-
-  let payload: any;
-  try {
-    payload = await req.json();
-  } catch {
-    return json({ error: 'Request body must be valid JSON' }, 400);
-  }
-
-  const { expert, position } = payload ?? {};
-  if (!expert || !position) return json({ error: 'Both "expert" and "position" are required' }, 400);
-
-  const userMessage = `<position>
+function buildUserMessage(expert, position) {
+  return `<position>
 Name: ${text(position.name)}
 Type: ${position.isInternational ? 'International' : 'National'}
 
@@ -117,48 +84,57 @@ Country / international experience: ${text(expert.countryExperience)}
 </expert_data>
 
 Propose ratings for criteria A, B and C by calling submit_scores.`;
+}
 
-  let anthropicResponse: Response;
+async function scoreExpert(payload, { apiKey, model, fetchImpl = fetch }) {
+  if (!apiKey) throw new ScoringError('failed-precondition', 'ANTHROPIC_API_KEY is not set for this function');
+
+  const { expert, position } = payload ?? {};
+  if (!expert || !position || typeof expert !== 'object' || typeof position !== 'object') {
+    throw new ScoringError('invalid-argument', 'Both "expert" and "position" are required');
+  }
+
+  let response;
   try {
-    anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    response = await fetchImpl('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         max_tokens: 1500,
         system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userMessage }],
-        tools: [scoreTool],
+        messages: [{ role: 'user', content: buildUserMessage(expert, position) }],
+        tools: [SCORE_TOOL],
         tool_choice: { type: 'tool', name: 'submit_scores' },
       }),
     });
   } catch (err) {
-    return json({ error: `Could not reach the Anthropic API: ${(err as Error).message}` }, 502);
+    throw new ScoringError('unavailable', `Could not reach the Anthropic API: ${err.message}`);
   }
 
-  if (!anthropicResponse.ok) {
-    const detail = await anthropicResponse.text();
-    return json({ error: `Anthropic API returned ${anthropicResponse.status}: ${detail}` }, 502);
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new ScoringError('unavailable', `Anthropic API returned ${response.status}: ${detail}`);
   }
 
-  const data = await anthropicResponse.json();
-  const toolUse = (data.content ?? []).find((b: any) => b.type === 'tool_use');
-  const scores = toolUse?.input;
+  const data = await response.json();
+  const scores = (data.content ?? []).find((b) => b.type === 'tool_use')?.input;
   if (!scores?.A || !scores?.B || !scores?.C) {
-    return json({ error: 'The model did not return scores for all three criteria' }, 502);
+    throw new ScoringError('unavailable', 'The model did not return scores for all three criteria');
   }
 
-  const result: Record<string, { rating: number; justification: string }> = {};
+  const result = {};
   for (const letter of ['A', 'B', 'C']) {
     result[letter] = {
       rating: clampRating(scores[letter].rating),
       justification: String(scores[letter].justification ?? '').trim(),
     };
   }
+  return result;
+}
 
-  return json(result);
-});
+module.exports = { scoreExpert, ScoringError, SYSTEM_PROMPT };

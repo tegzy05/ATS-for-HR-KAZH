@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// Files are publicly readable by URL (the app links to them directly) and can
+// be uploaded once but never overwritten or deleted. Size limits match the UI.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Tender ToR / JD files
+    match /tender-docs/{fileName} {
+      allow read: if true;
+      allow create: if request.resource.size < 20 * 1024 * 1024;
+    }
+
+    // Applicant documents and expert CVs, grouped per application
+    match /application-docs/{applicationId}/{fileName} {
+      allow read: if true;
+      allow create: if request.resource.size < 10 * 1024 * 1024;
+    }
+  }
+}
